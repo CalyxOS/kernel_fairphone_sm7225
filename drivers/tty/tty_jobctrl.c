@@ -293,7 +293,6 @@ void disassociate_ctty(int on_exit)
 	spin_lock_irq(&current->sighand->siglock);
 	put_pid(current->signal->tty_old_pgrp);
 	current->signal->tty_old_pgrp = NULL;
-
 	tty = tty_kref_get(current->signal->tty);
 	spin_unlock_irq(&current->sighand->siglock);
 
@@ -487,13 +486,13 @@ static int tiocspgrp(struct tty_struct *tty, struct tty_struct *real_tty, pid_t 
 	if (pgrp_nr < 0)
 		return -EINVAL;
 
-       spin_lock_irq(&real_tty->ctrl_lock);
-       if (!current->signal->tty ||
-           (current->signal->tty != real_tty) ||
-           (real_tty->session != task_session(current))) {
-               retval = -ENOTTY;
-               goto out_unlock_ctrl;
-       }
+	spin_lock_irq(&real_tty->ctrl_lock);
+	if (!current->signal->tty ||
+	    (current->signal->tty != real_tty) ||
+	    (real_tty->session != task_session(current))) {
+		retval = -ENOTTY;
+		goto out_unlock_ctrl;
+	}
 	rcu_read_lock();
 	pgrp = find_vpid(pgrp_nr);
 	retval = -ESRCH;
@@ -508,7 +507,7 @@ static int tiocspgrp(struct tty_struct *tty, struct tty_struct *real_tty, pid_t 
 out_unlock:
 	rcu_read_unlock();
 out_unlock_ctrl:
-       spin_unlock_irq(&real_tty->ctrl_lock);
+	spin_unlock_irq(&real_tty->ctrl_lock);
 	return retval;
 }
 
@@ -523,8 +522,9 @@ out_unlock_ctrl:
  */
 static int tiocgsid(struct tty_struct *tty, struct tty_struct *real_tty, pid_t __user *p)
 {
-       unsigned long flags;
-       pid_t sid;
+	unsigned long flags;
+	pid_t sid;
+
 	/*
 	 * (tty == real_tty) is a cheap way of
 	 * testing if the tty is NOT a master pty.
@@ -534,15 +534,15 @@ static int tiocgsid(struct tty_struct *tty, struct tty_struct *real_tty, pid_t _
 
 	spin_lock_irqsave(&real_tty->ctrl_lock, flags);
 	if (!real_tty->session)
-               goto err;
-       sid = pid_vnr(real_tty->session);
-       spin_unlock_irqrestore(&real_tty->ctrl_lock, flags);
+		goto err;
+	sid = pid_vnr(real_tty->session);
+	spin_unlock_irqrestore(&real_tty->ctrl_lock, flags);
 
-       return put_user(sid, p);
+	return put_user(sid, p);
 
 err:
-       spin_unlock_irqrestore(&real_tty->ctrl_lock, flags);
-       return -ENOTTY;
+	spin_unlock_irqrestore(&real_tty->ctrl_lock, flags);
+	return -ENOTTY;
 }
 
 /*
