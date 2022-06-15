@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "3752f894_19ad0d5a",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000004
+      },
+      "writtenOn": "2022-06-15T19:40:09Z",
+      "side": 1,
+      "message": "https://github.com/WeAreFairphone/android_kernel_fairphone_sm7225/commits/staging/lineage-19.1-rebase",
+      "revId": "7383a80a1c628c17ec5c56260370cf6923d61baa",
+      "serverId": "35266860-6252-469c-a67d-185064479fc0"
+    }
+  ]
+}
