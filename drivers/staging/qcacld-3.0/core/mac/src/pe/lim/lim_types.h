@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2012-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -456,10 +457,12 @@ lim_fill_sme_assoc_ind_params(
  * This function sends either LIM_MLM_ASSOC_IND
  * or LIM_MLM_REASSOC_IND to SME.
  *
- * Return: None
+ * Return: QDF_STATUS
  */
-void lim_send_mlm_assoc_ind(struct mac_context *mac, tpDphHashNode sta,
-			    struct pe_session *pe_session);
+QDF_STATUS lim_send_mlm_assoc_ind(struct mac_context *mac,
+				  tpDphHashNode sta,
+				  struct pe_session *pe_session);
+
 void lim_process_assoc_rsp_frame(struct mac_context *, uint8_t *, uint8_t, struct pe_session *);
 void lim_process_disassoc_frame(struct mac_context *, uint8_t *, struct pe_session *);
 /*
@@ -1238,6 +1241,15 @@ void lim_process_auth_failure_timeout(struct mac_context *mac_ctx);
  */
 void lim_process_assoc_failure_timeout(struct mac_context *mac_ctx,
 				       uint32_t msg_type);
+
+/**
+ * lim_process_sae_auth_timeout() - This function is called to process sae
+ * auth timeout
+ * @mac_ctx: Pointer to Global MAC structure
+ *
+ * @Return: None
+ */
+void lim_process_sae_auth_timeout(struct mac_context *mac_ctx);
 
 /**
  * lim_send_frame() - API to send frame
