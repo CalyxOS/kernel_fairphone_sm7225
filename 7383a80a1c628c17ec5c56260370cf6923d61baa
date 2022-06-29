@@ -16,6 +16,23 @@
       "message": "https://github.com/WeAreFairphone/android_kernel_fairphone_sm7225/commits/staging/lineage-19.1-rebase",
       "revId": "7383a80a1c628c17ec5c56260370cf6923d61baa",
       "serverId": "35266860-6252-469c-a67d-185064479fc0"
+    },
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "79b01b70_53c1f981",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000000
+      },
+      "writtenOn": "2022-06-29T16:20:10Z",
+      "side": 1,
+      "message": "\"arm64: configs: FP4: Align with production config\"\nforce-push b194eebcddd73eab32ef36591889c8aa286f77bb to android12L",
+      "revId": "7383a80a1c628c17ec5c56260370cf6923d61baa",
+      "serverId": "35266860-6252-469c-a67d-185064479fc0"
     }
   ]
 }
