@@ -203,10 +203,6 @@ ol_rx_fwd_check(struct ol_txrx_vdev_t *vdev,
 				msdu = msdu_list;
 				continue;
 			}
-			if (pdev->cfg.is_high_latency)
-				off = htt_rx_msdu_rx_desc_size_hl(
-								 pdev->htt_pdev,
-								 rx_desc);
 
 			if (pdev->cfg.is_high_latency)
 				off = htt_rx_msdu_rx_desc_size_hl(
