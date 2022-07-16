@@ -114,7 +114,6 @@ static void quota2_log(unsigned int hooknum,
 		strlcpy(pm->prefix, prefix, sizeof(pm->prefix));
 	if (in)
 		strlcpy(pm->indev_name, in->name, sizeof(pm->indev_name));
-
 	if (out)
 		strlcpy(pm->outdev_name, out->name, sizeof(pm->outdev_name));
 
@@ -156,8 +155,8 @@ static ssize_t quota_proc_write(struct file *file, const char __user *input,
 	if (copy_from_user(buf, input, size) != 0)
 		return -EFAULT;
 	buf[sizeof(buf)-1] = '\0';
-       if (size < sizeof(buf))
-               buf[size] = '\0';
+	if (size < sizeof(buf))
+		buf[size] = '\0';
 
 	spin_lock_bh(&e->lock);
 	e->quota = simple_strtoull(buf, NULL, 0);
