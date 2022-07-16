@@ -33,6 +33,24 @@
       "message": "\"arm64: configs: FP4: Align with production config\"\nforce-push b194eebcddd73eab32ef36591889c8aa286f77bb to android12L",
       "revId": "7383a80a1c628c17ec5c56260370cf6923d61baa",
       "serverId": "35266860-6252-469c-a67d-185064479fc0"
+    },
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "35c558bb_f438dc36",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000004
+      },
+      "writtenOn": "2022-07-16T17:12:46Z",
+      "side": 1,
+      "message": "\"msm: camera: Fix buffer overflow in cam_camera_cci_i2c_read_seq\"\nforce-push 4e7af4c62ec5ff585d769844001b591dc8bb4c87 to android12L",
+      "parentUuid": "79b01b70_53c1f981",
+      "revId": "7383a80a1c628c17ec5c56260370cf6923d61baa",
+      "serverId": "35266860-6252-469c-a67d-185064479fc0"
     }
   ]
 }
