@@ -83,6 +83,7 @@ modules.builtin
 #
 !.gitignore
 !.gitreview
+!.gitupstream*
 !.mailmap
 !.cocciconfig
 !.clang-format
