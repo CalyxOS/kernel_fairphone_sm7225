@@ -188,6 +188,9 @@
 #include <wlan_hdd_hang_event.h>
 #include <cdp_txrx_ctrl.h>
 #include "wlan_global_lmac_if_api.h"
+#ifdef WLAN_FEATURE_DYNAMIC_RX_AGGREGATION
+#include <net/pkt_cls.h>
+#endif
 
 #ifdef MODULE
 #define WLAN_MODULE_NAME  module_name(THIS_MODULE)
@@ -229,32 +232,7 @@ static unsigned int dev_num = 1;
 static struct cdev wlan_hdd_state_cdev;
 static struct class *class;
 static dev_t device;
-#ifndef MODULE
-static struct gwlan_loader *wlan_loader;
-static ssize_t wlan_boot_cb(struct kobject *kobj,
-			    struct kobj_attribute *attr,
-			    const char *buf, size_t count);
-struct gwlan_loader {
-	bool loaded_state;
-	struct kobject *boot_wlan_obj;
-	struct attribute_group *attr_group;
-};
-
-static struct kobj_attribute wlan_boot_attribute =
-	__ATTR(boot_wlan, 0220, NULL, wlan_boot_cb);
-
-static struct attribute *attrs[] = {
-	&wlan_boot_attribute.attr,
-	NULL,
-};
-#define MODULE_INITIALIZED 1
-
-#ifdef MULTI_IF_NAME
-#define WLAN_LOADER_NAME "boot_" MULTI_IF_NAME
-#else
-#define WLAN_LOADER_NAME "boot_wlan"
-#endif
-#endif
+static bool hdd_loaded = false;
 
 /* the Android framework expects this param even though we don't use it */
 #define BUF_LEN 20
@@ -6635,6 +6613,7 @@ struct hdd_adapter *hdd_open_adapter(struct hdd_context *hdd_ctx, uint8_t sessio
 	qdf_event_create(&adapter->peer_cleanup_done);
 	hdd_sta_info_init(&adapter->sta_info_list);
 	hdd_sta_info_init(&adapter->cache_sta_info_list);
+	qdf_atomic_init(&adapter->gro_disallowed);
 
 	for (i = 0; i < NET_DEV_HOLD_ID_MAX; i++)
 		qdf_atomic_init(
@@ -8890,32 +8869,6 @@ out:
 }
 
 /**
- * hdd_rx_wake_lock_destroy() - Destroy RX wakelock
- * @hdd_ctx:	HDD context.
- *
- * Destroy RX wakelock.
- *
- * Return: None.
- */
-static void hdd_rx_wake_lock_destroy(struct hdd_context *hdd_ctx)
-{
-	qdf_wake_lock_destroy(&hdd_ctx->rx_wake_lock);
-}
-
-/**
- * hdd_rx_wake_lock_create() - Create RX wakelock
- * @hdd_ctx:	HDD context.
- *
- * Create RX wakelock.
- *
- * Return: None.
- */
-static void hdd_rx_wake_lock_create(struct hdd_context *hdd_ctx)
-{
-	qdf_wake_lock_create(&hdd_ctx->rx_wake_lock, "qcom_rx_wakelock");
-}
-
-/**
  * hdd_context_deinit() - Deinitialize HDD context
  * @hdd_ctx:    HDD context.
  *
@@ -8932,8 +8885,6 @@ static int hdd_context_deinit(struct hdd_context *hdd_ctx)
 	wlan_hdd_cfg80211_deinit(hdd_ctx->wiphy);
 
 	hdd_sap_context_destroy(hdd_ctx);
-
-	hdd_rx_wake_lock_destroy(hdd_ctx);
 
 	hdd_scan_context_destroy(hdd_ctx);
 
@@ -9908,6 +9859,151 @@ void hdd_set_vdev_bundle_require_flag(uint16_t vdev_id,
 #endif
 
 #define HDD_BW_GET_DIFF(_x, _y) (unsigned long)((ULONG_MAX - (_y)) + (_x) + 1)
+
+#ifdef WLAN_FEATURE_DYNAMIC_RX_AGGREGATION
+static enum qdisc_filter_status
+__hdd_check_for_prio_filter_in_clsact_qdisc(struct tcf_block *block,
+					    uint32_t prio)
+{
+	struct tcf_chain *chain;
+	struct tcf_proto *tp;
+	enum qdisc_filter_status ret = QDISC_FILTER_PRIO_MISMATCH;
+
+	if (!rtnl_trylock())
+		return QDISC_FILTER_RTNL_LOCK_FAIL;
+
+	list_for_each_entry(chain, &block->chain_list, list) {
+		for (tp = rtnl_dereference(chain->filter_chain); tp;
+		     tp = rtnl_dereference(tp->next)) {
+			if (tp->prio == (prio << 16))
+				ret = QDISC_FILTER_PRIO_MATCH;
+		}
+	}
+	rtnl_unlock();
+
+	return ret;
+}
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0))
+/**
+ * hdd_check_for_prio_filter_in_clsact_qdisc() - Check if priority 3 filter
+ *  is configured in the ingress clsact qdisc
+ * @qdisc: pointer to clsact qdisc
+ *
+ * Return: true if priority 3 filter is present else false
+ */
+static enum qdisc_filter_status
+hdd_check_for_prio_filter_in_clsact_qdisc(struct Qdisc *qdisc, uint32_t prio)
+{
+	const struct Qdisc_class_ops *cops;
+	struct tcf_block *ingress_block;
+
+	cops = qdisc->ops->cl_ops;
+	if (qdf_unlikely(!cops || !cops->tcf_block))
+		return QDISC_FILTER_PRIO_MISMATCH;
+
+	ingress_block = cops->tcf_block(qdisc, TC_H_MIN_INGRESS, NULL);
+	if (qdf_unlikely(!ingress_block))
+		return QDISC_FILTER_PRIO_MISMATCH;
+
+	return __hdd_check_for_prio_filter_in_clsact_qdisc(ingress_block, prio);
+}
+#else
+static enum qdisc_filter_status
+hdd_check_for_prio_filter_in_clsact_qdisc(struct Qdisc *qdisc, uint32_t prio)
+{
+	const struct Qdisc_class_ops *cops;
+	struct tcf_block *ingress_block;
+
+	cops = qdisc->ops->cl_ops;
+	if (qdf_unlikely(!cops || !cops->tcf_block))
+		return QDISC_FILTER_PRIO_MISMATCH;
+
+	ingress_block = cops->tcf_block(qdisc, TC_H_MIN_INGRESS);
+	if (qdf_unlikely(!ingress_block))
+		return QDISC_FILTER_PRIO_MISMATCH;
+
+	return __hdd_check_for_prio_filter_in_clsact_qdisc(ingress_block, prio);
+}
+#endif
+
+/**
+ * hdd_rx_check_qdisc_for_adapter() - Check if any ingress qdisc is configured
+ *  for given adapter
+ * @adapter: pointer to HDD adapter context
+ * @rx_ctx_id: Rx context id
+ *
+ * The function checks if ingress qdisc is registered for a given
+ * net device.
+ *
+ * Return: None
+ */
+static void
+hdd_rx_check_qdisc_for_adapter(struct hdd_adapter *adapter)
+{
+	struct hdd_context *hdd_ctx = adapter->hdd_ctx;
+	struct netdev_queue *ingress_q;
+	struct Qdisc *ingress_qdisc;
+	bool disable_gro = false;
+	enum qdisc_filter_status ret;
+
+	if (!adapter->dev->ingress_queue)
+		goto reset_wl;
+
+	rcu_read_lock();
+
+	ingress_q = rcu_dereference(adapter->dev->ingress_queue);
+	if (qdf_unlikely(!ingress_q))
+		goto reset;
+
+	ingress_qdisc = rcu_dereference(ingress_q->qdisc);
+	if (qdf_unlikely(!ingress_qdisc))
+		goto reset;
+
+	if (qdf_str_eq(ingress_qdisc->ops->id, "ingress")) {
+		disable_gro = true;
+	} else if (qdf_str_eq(ingress_qdisc->ops->id, "clsact")) {
+		ret = hdd_check_for_prio_filter_in_clsact_qdisc(ingress_qdisc,
+					 hdd_ctx->dp_agg_param.tc_ingress_prio);
+
+		if (ret == QDISC_FILTER_RTNL_LOCK_FAIL) {
+			rcu_read_unlock();
+			return;
+		} else if (ret == QDISC_FILTER_PRIO_MISMATCH) {
+			goto reset;
+		}
+
+		disable_gro = true;
+	}
+
+	if (disable_gro) {
+		rcu_read_unlock();
+
+		if (qdf_likely(qdf_atomic_read(&adapter->gro_disallowed)))
+			return;
+
+		hdd_debug("ingress qdisc/filter configured disable GRO");
+		qdf_atomic_set(&adapter->gro_disallowed, 1);
+
+		return;
+	}
+
+reset:
+	rcu_read_unlock();
+
+reset_wl:
+	if (qdf_unlikely(qdf_atomic_read(&adapter->gro_disallowed))) {
+		hdd_debug("ingress qdisc/filter removed enable GRO");
+		qdf_atomic_set(&adapter->gro_disallowed, 0);
+	}
+}
+#else
+static inline void
+hdd_rx_check_qdisc_for_adapter(struct hdd_adapter *adapter)
+{
+}
+#endif
+
 static void __hdd_bus_bw_work_handler(struct hdd_context *hdd_ctx)
 {
 	struct hdd_adapter *adapter = NULL, *next_adapter = NULL,
@@ -9953,6 +10049,10 @@ static void __hdd_bus_bw_work_handler(struct hdd_context *hdd_ctx)
 			hdd_adapter_dev_put_debug(adapter, dbgid);
 			continue;
 		}
+
+		if (hdd_ctx->dp_agg_param.tc_based_dyn_gro ||
+		    hdd_ctx->ol_enable == CFG_DYNAMIC_GRO_ENABLED)
+			hdd_rx_check_qdisc_for_adapter(adapter);
 
 		tx_packets += HDD_BW_GET_DIFF(adapter->stats.tx_packets,
 					      adapter->prev_tx_packets);
@@ -11393,8 +11493,6 @@ static int hdd_context_init(struct hdd_context *hdd_ctx)
 	if (ret)
 		goto list_destroy;
 
-	hdd_rx_wake_lock_create(hdd_ctx);
-
 	ret = hdd_sap_context_init(hdd_ctx);
 	if (ret)
 		goto scan_destroy;
@@ -11418,7 +11516,6 @@ sap_destroy:
 
 scan_destroy:
 	hdd_scan_context_destroy(hdd_ctx);
-	hdd_rx_wake_lock_destroy(hdd_ctx);
 list_destroy:
 	qdf_list_destroy(&hdd_ctx->hdd_adapters);
 
@@ -15654,6 +15751,7 @@ static void hdd_inform_wifi_on(void)
 }
 #endif
 
+static int hdd_driver_load(void);
 static ssize_t wlan_hdd_state_ctrl_param_write(struct file *filp,
 						const char __user *user_buf,
 						size_t count,
@@ -15686,6 +15784,13 @@ static ssize_t wlan_hdd_state_ctrl_param_write(struct file *filp,
 	if (strncmp(buf, wlan_on_str, strlen(wlan_on_str)) != 0) {
 		pr_err("Invalid value received from framework");
 		goto exit;
+	}
+
+	if (!hdd_loaded) {
+		if (hdd_driver_load()) {
+			pr_err("%s: Failed to init hdd module\n", __func__);
+			goto exit;
+		}
 	}
 
 	if (!cds_is_driver_loaded() || cds_is_driver_recovering()) {
@@ -16547,16 +16652,10 @@ static int hdd_driver_load(void)
 
 	hdd_set_conparam(con_mode);
 
-	errno = wlan_hdd_state_ctrl_param_create();
-	if (errno) {
-		hdd_err("Failed to create ctrl param; errno:%d", errno);
-		goto wakelock_destroy;
-	}
-
 	errno = pld_init();
 	if (errno) {
 		hdd_err("Failed to init PLD; errno:%d", errno);
-		goto param_destroy;
+		goto wakelock_destroy;
 	}
 
 	hdd_driver_mode_change_register();
@@ -16571,6 +16670,7 @@ static int hdd_driver_load(void)
 		goto pld_deinit;
 	}
 
+	hdd_loaded = true;
 	hdd_debug("%s: driver loaded", WLAN_MODULE_NAME);
 
 	return 0;
@@ -16589,8 +16689,6 @@ pld_deinit:
 	/* Wait for any ref taken on /dev/wlan to be released */
 	while (qdf_atomic_read(&wlan_hdd_state_fops_ref))
 		;
-param_destroy:
-	wlan_hdd_state_ctrl_param_destroy();
 wakelock_destroy:
 	qdf_wake_lock_destroy(&wlan_wake_lock);
 comp_deinit:
@@ -16696,133 +16794,6 @@ static void hdd_driver_unload(void)
 	hdd_qdf_deinit();
 }
 
-#ifndef MODULE
-/**
- * wlan_boot_cb() - Wlan boot callback
- * @kobj:      object whose directory we're creating the link in.
- * @attr:      attribute the user is interacting with
- * @buff:      the buffer containing the user data
- * @count:     number of bytes in the buffer
- *
- * This callback is invoked when the fs is ready to start the
- * wlan driver initialization.
- *
- * Return: 'count' on success or a negative error code in case of failure
- */
-static ssize_t wlan_boot_cb(struct kobject *kobj,
-			    struct kobj_attribute *attr,
-			    const char *buf,
-			    size_t count)
-{
-
-	if (wlan_loader->loaded_state) {
-		hdd_err("wlan driver already initialized");
-		return -EALREADY;
-	}
-
-	if (hdd_driver_load())
-		return -EIO;
-
-	wlan_loader->loaded_state = MODULE_INITIALIZED;
-
-	return count;
-}
-
-/**
- * hdd_sysfs_cleanup() - cleanup sysfs
- *
- * Return: None
- *
- */
-static void hdd_sysfs_cleanup(void)
-{
-	/* remove from group */
-	if (wlan_loader->boot_wlan_obj && wlan_loader->attr_group)
-		sysfs_remove_group(wlan_loader->boot_wlan_obj,
-				   wlan_loader->attr_group);
-
-	/* unlink the object from parent */
-	kobject_del(wlan_loader->boot_wlan_obj);
-
-	/* free the object */
-	kobject_put(wlan_loader->boot_wlan_obj);
-
-	kfree(wlan_loader->attr_group);
-	kfree(wlan_loader);
-
-	wlan_loader = NULL;
-}
-
-/**
- * wlan_init_sysfs() - Creates the sysfs to be invoked when the fs is
- * ready
- *
- * This is creates the syfs entry boot_wlan. Which shall be invoked
- * when the filesystem is ready.
- *
- * QDF API cannot be used here since this function is called even before
- * initializing WLAN driver.
- *
- * Return: 0 for success, errno on failure
- */
-static int wlan_init_sysfs(void)
-{
-	int ret = -ENOMEM;
-
-	wlan_loader = kzalloc(sizeof(*wlan_loader), GFP_KERNEL);
-	if (!wlan_loader)
-		return -ENOMEM;
-
-	wlan_loader->boot_wlan_obj = NULL;
-	wlan_loader->attr_group = kzalloc(sizeof(*(wlan_loader->attr_group)),
-					  GFP_KERNEL);
-	if (!wlan_loader->attr_group)
-		goto error_return;
-
-	wlan_loader->loaded_state = 0;
-	wlan_loader->attr_group->attrs = attrs;
-
-	wlan_loader->boot_wlan_obj = kobject_create_and_add(WLAN_LOADER_NAME,
-							    kernel_kobj);
-	if (!wlan_loader->boot_wlan_obj) {
-		hdd_err("sysfs create and add failed");
-		goto error_return;
-	}
-
-	ret = sysfs_create_group(wlan_loader->boot_wlan_obj,
-				 wlan_loader->attr_group);
-	if (ret) {
-		hdd_err("sysfs create group failed; errno:%d", ret);
-		goto error_return;
-	}
-
-	return 0;
-
-error_return:
-	hdd_sysfs_cleanup();
-
-	return ret;
-}
-
-/**
- * wlan_deinit_sysfs() - Removes the sysfs created to initialize the wlan
- *
- * Return: 0 on success or errno on failure
- */
-static int wlan_deinit_sysfs(void)
-{
-	if (!wlan_loader) {
-		hdd_err("wlan_loader is null");
-		return -EINVAL;
-	}
-
-	hdd_sysfs_cleanup();
-	return 0;
-}
-
-#endif /* MODULE */
-
-#ifdef MODULE
 /**
  * hdd_module_init() - Module init helper
  *
@@ -16832,26 +16803,15 @@ static int wlan_deinit_sysfs(void)
  */
 static int hdd_module_init(void)
 {
-	if (hdd_driver_load())
-		return -EINVAL;
+	int ret;
 
-	return 0;
-}
-#else
-static int __init hdd_module_init(void)
-{
-	int ret = -EINVAL;
-
-	ret = wlan_init_sysfs();
+	ret = wlan_hdd_state_ctrl_param_create();
 	if (ret)
-		hdd_err("Failed to create sysfs entry");
+		pr_err("wlan_hdd_state_create:%x\n", ret);
 
 	return ret;
 }
-#endif
 
-
-#ifdef MODULE
 /**
  * hdd_module_exit() - Exit function
  *
@@ -16863,13 +16823,6 @@ static void __exit hdd_module_exit(void)
 {
 	hdd_driver_unload();
 }
-#else
-static void __exit hdd_module_exit(void)
-{
-	hdd_driver_unload();
-	wlan_deinit_sysfs();
-}
-#endif
 
 static int fwpath_changed_handler(const char *kmessage,
 				  const struct kernel_param *kp)
