@@ -670,7 +670,6 @@ static int dsi_panel_wled_register(struct dsi_panel *panel,
 	return 0;
 }
 
-#if !defined(CONFIG_PXLW_IRIS)
 static int dsi_panel_dcs_set_display_brightness_c2(struct mipi_dsi_device *dsi,
 			u32 bl_lvl)
 {
@@ -684,7 +683,6 @@ static int dsi_panel_dcs_set_display_brightness_c2(struct mipi_dsi_device *dsi,
 
 	return mipi_dsi_dcs_write(dsi, 0xC2, payload, sizeof(payload));
 }
-#endif
 
 
 
@@ -706,15 +704,17 @@ static int dsi_panel_update_backlight(struct dsi_panel *panel,
 	if (panel->bl_config.bl_inverted_dbv)
 		bl_lvl = (((bl_lvl & 0xff) << 8) | (bl_lvl >> 8));
 
-#if defined(CONFIG_PXLW_IRIS)
-	if (!iris_dc_on_off_pending())
-		rc = iris_update_backlight(bl_lvl);
-#else
 	if (panel->bl_config.bl_dcs_subtype == 0xc2)
 		rc = dsi_panel_dcs_set_display_brightness_c2(dsi, bl_lvl);
-	else
-		rc = mipi_dsi_dcs_set_display_brightness(dsi, bl_lvl);
+	else {
+#if defined(CONFIG_PXLW_IRIS)
+		if (!iris_dc_on_off_pending())
+			rc = iris_update_backlight(bl_lvl);
+#else
+			rc = mipi_dsi_dcs_set_display_brightness(dsi, bl_lvl);
 #endif
+	}
+
 	if (rc < 0)
 		DSI_ERR("failed to update dcs backlight:%d\n", bl_lvl);
 

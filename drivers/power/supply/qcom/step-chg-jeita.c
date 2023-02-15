@@ -893,6 +893,7 @@ update_time:
 	chip->step_last_update_time = ktime_get();
 	return 0;
 }
+#endif
 
 static void handle_jeita_fcc_scaling(struct step_chg_info *chip)
 {
@@ -963,7 +964,6 @@ static void handle_jeita_fcc_scaling(struct step_chg_info *chip)
 			chip->jeita_last_update_temp);
 	}
 }
-#endif
 
 #if defined(CONFIG_TCT_PM7250_COMMON)
 #define FV_LVL_1	(300000)
@@ -978,6 +978,10 @@ static int handle_jeita(struct step_chg_info *chip)
 	union power_supply_propval pval = {0, };
 	int rc = 0, fcc_ua = 0, fv_uv = 0;
 	u64 elapsed_ms = 0;
+
+	/* Handle jeita-fcc-scaling if enabled */
+	if (chip->jeita_fcc_scaling)
+		handle_jeita_fcc_scaling(chip);
 
 	if (!chip->sw_jeita_enable || !chip->sw_jeita_cfg_valid) {
 		pr_debug("sw_jeita disabled or invalid, %d, %d\n",
