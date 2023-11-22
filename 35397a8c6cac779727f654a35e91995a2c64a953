@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "08083eaa_9754cc68",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000000
+      },
+      "writtenOn": "2023-11-22T21:22:07Z",
+      "side": 1,
+      "message": "Are we building FP4 too?",
+      "revId": "35397a8c6cac779727f654a35e91995a2c64a953",
+      "serverId": "35266860-6252-469c-a67d-185064479fc0"
+    }
+  ]
+}
